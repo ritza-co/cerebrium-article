@@ -1,6 +1,6 @@
-# README.md - Optimized vLLM OpenAI-Compatible Endpoint on Cerebrium
+# README.md
 
-# 🚀 Ultra-Optimized vLLM OpenAI-Compatible Endpoint
+# Optimized vLLM OpenAI-Compatible Endpoint
 
 This project deploys a **high-performance, cost-effective** OpenAI-compatible API endpoint using vLLM on Cerebrium's serverless infrastructure. Optimized for **sub-2.5s inference times** and **50+ tokens/sec** throughput on A10 GPUs.
 
@@ -9,7 +9,6 @@ This project deploys a **high-performance, cost-effective** OpenAI-compatible AP
 - **Inference Time**: < 2.5 seconds
 - **Throughput**: > 50 tokens/second  
 - **Cost**: < $0.0008 per request
-- **Availability**: 99%+ uptime with warm instances
 
 ## 📋 Prerequisites
 
