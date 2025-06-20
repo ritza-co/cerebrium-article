@@ -101,7 +101,7 @@ The main application file containing the optimized vLLM server with multiple end
 
 **Key Optimizations:**
 
-- **Model Selection**: Uses Mistral-7B (faster) or Llama-3.1-8B for optimal A10 performance
+- **Model Selection**: Uses Llama-3.1-8B for optimal A10 performance
 - **Memory Management**: Conservative 75% GPU utilization for stability
 - **Context Optimization**: 1024 token context length for speed
 - **Batch Processing**: Small batches (4 sequences) for low latency  
