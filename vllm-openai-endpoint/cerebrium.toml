@@ -37,14 +37,14 @@ max_replicas = 3                      # Allow some scaling but keep costs reason
 cooldown = 30                         # Balanced: Not too aggressive
 
 [cerebrium.dependencies.pip]
-# CORE: Proven, stable dependency stack
-torch = ">=2.1.0,<2.4.0"            # Stable PyTorch for A10
+# CORE: Updated for vLLM v0.9.0 compatibility
+torch = ">=2.7.0,<3.0.0"            # Required by vLLM v0.9.0
 transformers = ">=4.35.0,<5.0.0"     # Compatible with vLLM
 accelerate = ">=0.24.0"              # Model loading optimization
 sentencepiece = "latest"             # Tokenization
 
-# VLLM: Use stable version range
-vllm = ">=0.4.0,<0.6.0"              # Stable version range
+# VLLM: Use latest stable version
+vllm = ">=0.9.0,<1.0.0"              # Latest stable v0.9.x
 pydantic = ">=2.0.0,<3.0.0"          # API validation
 huggingface-hub = ">=0.19.0"          # Model downloads
 
