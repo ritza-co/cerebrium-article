@@ -5,12 +5,11 @@
 from vllm import SamplingParams, AsyncLLMEngine
 from vllm.engine.arg_utils import AsyncEngineArgs
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 import time
 import json
 import os
 import uuid
-import asyncio
 from huggingface_hub import login
 
 # Initialize Hugging Face authentication
@@ -19,35 +18,36 @@ if os.environ.get("HF_AUTH_TOKEN"):
 
 # CRITICAL: Use fastest proven model for A10
 # Mistral-7B is significantly faster than Llama-3.1-8B
-# MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.1"
-MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
+# changed to quantized model
+# MODEL_NAME = "TheBloke/Mistral-7B-v0.1-AWQ"
+MODEL_NAME = "TheBloke/Mistral-7B-v0.1-AWQ"
 
 print(f"🚀 SPEED-OPTIMIZED: Using {MODEL_NAME} for ultra-fast A10 performance")
 
-# ULTRA-OPTIMIZED vLLM configuration for A10 speed
+# ULTRA-OPTIMIZED vLLM v0.9.0 configuration for A10 speed
 engine_args = AsyncEngineArgs(
     model=MODEL_NAME,
     
     # SPEED 1: Conservative GPU memory for stability and speed
-    gpu_memory_utilization=0.75,        # Reduced for better performance
+    gpu_memory_utilization=0.95,        # Reduced for better performance
     
-    # SPEED 2: Optimized context length - sweet spot for speed
-    max_model_len=1024,                 # Small context for speed
+    # SPEED 2: SMALLER context for faster processing
+    max_model_len=512,                  # Reduced from 1024 for speed
     
     # SPEED 3: Optimal quantization for A10
     dtype="float16",                    # Perfect for A10
     
     # SPEED 4: Optimized batch settings
     max_num_seqs=4,                     # Small batches for low latency
-    max_num_batched_tokens=1024,        # Match max_model_len
+    max_num_batched_tokens=512,         # Match max_model_len
     
     # SPEED 5: Fastest execution mode
     enforce_eager=True,                 # No CUDA graphs overhead
     
     # SPEED 6: Minimal overhead settings
     trust_remote_code=False,
-    disable_log_stats=True,
-    enable_prefix_caching=False,        # Adds overhead
+    disable_log_stats=True,             # Disable to avoid logging format issues
+    enable_prefix_caching=False,        # Disable prefix caching for v0.9.0 compatibility
     
     # SPEED 7: Optimized memory management
     swap_space=0,                       # No swap for speed
@@ -59,6 +59,16 @@ engine_args = AsyncEngineArgs(
     
     # SPEED 9: Deterministic for testing
     seed=42,
+    
+    # V0.9.0 COMPATIBILITY: Remove parameters that may not exist in v0.9.0
+    # disable_sliding_window parameter may not exist in v0.9.0
+    max_logprobs=20,                    # Use default value for v0.9.0
+
+    # FIXED: Remove tokenizer_mode to let vLLM auto-detect for AWQ
+    # tokenizer_mode="mistral",         # REMOVED - causes tokenizer errors with AWQ
+
+    quantization="awq",
+
 )
 
 print("🔥 Initializing SPEED-OPTIMIZED vLLM engine...")
@@ -92,7 +102,7 @@ def format_mistral_prompt(messages: list) -> str:
     
     for i, message in enumerate(recent_messages):
         role = message.role
-        content = message.content.strip()[:200]  # Truncate for speed
+        content = message.content.strip()[:150]  # REDUCED: Truncate more for speed
         
         if role == "system":
             # System message goes in first INST
@@ -123,7 +133,7 @@ ULTRA_FAST_SAMPLING = {
     "temperature": 0.1,              # Very low for speed and determinism
     "top_p": 0.7,                   # Reduced for faster sampling
     "top_k": 15,                    # Small for speed
-    "max_tokens": 75,               # CRITICAL: Small output for speed
+    "max_tokens": 50,               # REDUCED: Smaller output for speed
     "repetition_penalty": 1.05,     # Prevent loops
 }
 
@@ -134,7 +144,7 @@ async def run(
     temperature: float = 0.1,        # Default optimized for speed
     top_p: float = 0.7,              
     top_k: int = 15,                 
-    max_tokens: int = 75,            # Small default for speed
+    max_tokens: int = 50,            # REDUCED: Smaller default for speed
     frequency_penalty: float = 0.0,
     presence_penalty: float = 0.0,
     stream: bool = True,
@@ -172,7 +182,7 @@ async def run(
             temperature=max(0.05, min(temperature, 0.5)),    # Clamp for speed
             top_p=max(0.5, min(top_p, 0.9)),                # Clamp for speed
             top_k=max(5, min(top_k, 25)),                   # Clamp for speed
-            max_tokens=min(max_tokens, 100),                # Hard limit for speed
+            max_tokens=min(max_tokens, 75),                 # REDUCED: Hard limit for speed
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
             repetition_penalty=1.05,                        # Prevent repetition
@@ -265,7 +275,7 @@ async def chat(
     temperature: float = 0.1,
     top_p: float = 0.7,
     top_k: int = 15,
-    max_tokens: int = 75,
+    max_tokens: int = 50,            # REDUCED: Smaller default for speed
     frequency_penalty: float = 0.0,
     presence_penalty: float = 0.0,
     stop: list = None
@@ -295,7 +305,7 @@ async def chat(
             temperature=max(0.05, min(temperature, 0.5)),
             top_p=max(0.5, min(top_p, 0.9)),
             top_k=max(5, min(top_k, 25)),
-            max_tokens=min(max_tokens, 100),
+            max_tokens=min(max_tokens, 75),
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
             repetition_penalty=1.05,
@@ -351,7 +361,7 @@ async def chat(
 async def complete(
     prompt: str,
     temperature: float = 0.1,
-    max_tokens: int = 75
+    max_tokens: int = 50             # REDUCED: Smaller default for speed
 ):
     """
     ULTRA-FAST simple completion for basic use cases.
@@ -369,7 +379,7 @@ async def complete(
             temperature=max(0.05, min(temperature, 0.5)),
             top_p=0.7,
             top_k=15,
-            max_tokens=min(max_tokens, 100),
+            max_tokens=min(max_tokens, 75),
             repetition_penalty=1.05,
             stop=["</s>", "[INST]"],
             skip_special_tokens=True,
@@ -452,7 +462,7 @@ async def health():
             "optimizations": [
                 "Mistral-7B (faster than Llama-8B)",
                 "Fixed prompt formatting (no loops)",
-                "Optimized context (1024 tokens)",
+                "Optimized context (512 tokens)",
                 "Speed-optimized sampling",
                 "Proper stop sequences",
                 "Conservative GPU utilization (75%)",
