@@ -32,7 +32,7 @@ engine_args = AsyncEngineArgs(
     gpu_memory_utilization=0.95,        # Reduced for better performance
     
     # SPEED 2: SMALLER context for faster processing
-    max_model_len=512,                  # Reduced from 1024 for speed
+    max_model_len=256,                  # Reduced from 1024 for speed
     
     # SPEED 3: Optimal quantization for A10
     dtype="float16",                    # Perfect for A10

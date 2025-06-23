@@ -266,33 +266,67 @@ class OptimizedPerformanceTester:
                 # FIXED: Extract content properly
                 content, token_count = self.extract_content_from_response(result)
                 
-                # Get Cerebrium's performance metrics if available
+                # FIXED: Always use Cerebrium's internal performance metrics when available
                 cerebrium_time = None
                 cerebrium_tokens_per_sec = None
                 
-                if "usage" in result:
-                    usage = result["usage"]
-                    cerebrium_time = usage.get("inference_time_seconds")
-                    cerebrium_tokens_per_sec = usage.get("tokens_per_second")
-                    if "tokens_generated" in usage:
-                        token_count = max(token_count, usage["tokens_generated"])
+                # Check if result has nested structure with usage data
+                usage_data = None
+                if "result" in result and isinstance(result["result"], dict) and "usage" in result["result"]:
+                    usage_data = result["result"]["usage"]
+                elif "usage" in result:
+                    usage_data = result["usage"]
                 
-                # Use Cerebrium's timing if available, otherwise use total time
-                inference_time = cerebrium_time if cerebrium_time else total_time
-                tokens_per_second = cerebrium_tokens_per_sec if cerebrium_tokens_per_sec else (
-                    round(token_count / inference_time, 1) if inference_time > 0 and token_count > 0 else 0
-                )
+                if usage_data:
+                    cerebrium_time = usage_data.get("inference_time_seconds")
+                    cerebrium_tokens_per_sec = usage_data.get("tokens_per_second")
+                    if "tokens_generated" in usage_data:
+                        token_count = usage_data["tokens_generated"]  # Use actual token count from Cerebrium
                 
-                # Calculate cost
-                cost = inference_time * 0.000306  # A10 cost per second
+                # ALWAYS use Cerebrium's internal timing and speed when available
+                if cerebrium_time is not None:
+                    inference_time = cerebrium_time
+                else:
+                    inference_time = total_time
+                
+                # ENHANCED: Calculate total tokens/sec including input tokens
+                input_token_count = 0
+                if usage_data and "prompt_tokens" in usage_data:
+                    input_token_count = usage_data["prompt_tokens"]
+                else:
+                    # Estimate input tokens from prompt
+                    prompt_text = ""
+                    if "messages" in payload and payload["messages"]:
+                        prompt_text = " ".join([msg.get("content", "") for msg in payload["messages"]])
+                    import re
+                    words = re.findall(r'\w+|[^\w\s]', prompt_text)
+                    input_token_count = len(words)
+                
+                total_tokens = token_count + input_token_count
+                
+                if cerebrium_tokens_per_sec is not None:
+                    tokens_per_second = cerebrium_tokens_per_sec  # This is output tokens/sec from Cerebrium
+                    total_tokens_per_second = round(total_tokens / inference_time, 1) if inference_time > 0 else 0
+                else:
+                    tokens_per_second = round(token_count / inference_time, 1) if inference_time > 0 and token_count > 0 else 0
+                    total_tokens_per_second = round(total_tokens / inference_time, 1) if inference_time > 0 else 0
+                
+                # ENHANCED: Calculate cost with token-based pricing insights
+                time_based_cost = inference_time * 0.000306  # A10 cost per second
+                
+                # Calculate cost per token for comparison
+                cost_per_output_token = time_based_cost / token_count if token_count > 0 else 0
+                cost_per_total_token = time_based_cost / total_tokens if total_tokens > 0 else 0
+                
+                cost = time_based_cost  # Keep time-based cost as primary
                 
                 print(f"✅ Chat test successful!")
                 # ENHANCED: Show full response instead of truncated
                 print(f"   📝 Full Response: '{content}'")
-                print(f"   📊 Length: {len(content)} chars, {token_count} tokens")
+                print(f"   📊 Tokens: {input_token_count} input + {token_count} output = {total_tokens} total")
                 print(f"   ⏱️  Time: {inference_time:.2f}s")
-                print(f"   🚀 Speed: {tokens_per_second} tokens/sec")
-                print(f"   💰 Cost: ${cost:.6f}")
+                print(f"   🚀 Speed: {tokens_per_second} output tok/s, {total_tokens_per_second} total tok/s")
+                print(f"   💰 Cost: ${cost:.6f} (${cost_per_output_token:.8f}/output tok, ${cost_per_total_token:.8f}/total tok)")
                 
                 # Calculate performance score
                 performance_score = self.calculate_performance_score(inference_time, tokens_per_second, cost)
@@ -301,10 +335,15 @@ class OptimizedPerformanceTester:
                     "success": True,
                     "content": content,
                     "token_count": token_count,
+                    "input_token_count": input_token_count,
+                    "total_tokens": total_tokens,
                     "inference_time": inference_time,
                     "total_time": total_time,
-                    "tokens_per_second": tokens_per_second,
+                    "tokens_per_second": tokens_per_second,  # Output tokens/sec
+                    "total_tokens_per_second": total_tokens_per_second,  # Total tokens/sec
                     "cost": cost,
+                    "cost_per_output_token": cost_per_output_token,
+                    "cost_per_total_token": cost_per_total_token,
                     "performance_score": performance_score
                 }
             else:
@@ -345,27 +384,61 @@ class OptimizedPerformanceTester:
                 # FIXED: Extract content properly
                 content, token_count = self.extract_content_from_response(result)
                 
-                # Get performance metrics if available
-                performance = result.get("performance", {})
-                inference_time = performance.get("inference_time", total_time)
+                # FIXED: Get Cerebrium's internal performance metrics
+                cerebrium_time = None
+                cerebrium_tokens_per_sec = None
                 
-                if "tokens_generated" in performance:
-                    token_count = max(token_count, performance["tokens_generated"])
+                # Check for usage data in nested result structure or direct
+                usage_data = None
+                if "result" in result and isinstance(result["result"], dict) and "usage" in result["result"]:
+                    usage_data = result["result"]["usage"]
+                elif "usage" in result:
+                    usage_data = result["usage"]
+                elif "performance" in result:
+                    usage_data = result["performance"]  # Fallback to performance field
                 
-                cerebrium_tokens_per_sec = performance.get("tokens_per_second")
-                tokens_per_second = cerebrium_tokens_per_sec if cerebrium_tokens_per_sec else (
-                    round(token_count / inference_time, 1) if inference_time > 0 and token_count > 0 else 0
-                )
+                if usage_data:
+                    cerebrium_time = usage_data.get("inference_time_seconds") or usage_data.get("inference_time")
+                    cerebrium_tokens_per_sec = usage_data.get("tokens_per_second")
+                    if "tokens_generated" in usage_data:
+                        token_count = usage_data["tokens_generated"]
                 
-                cost = inference_time * 0.000306  # A10 cost per second
+                # Use internal metrics when available
+                inference_time = cerebrium_time if cerebrium_time is not None else total_time
+                
+                # ENHANCED: Calculate total tokens including input
+                input_token_count = 0
+                if usage_data and "prompt_tokens" in usage_data:
+                    input_token_count = usage_data["prompt_tokens"]
+                else:
+                    # Estimate input tokens from prompt
+                    prompt_text = payload.get("prompt", "")
+                    import re
+                    words = re.findall(r'\w+|[^\w\s]', prompt_text)
+                    input_token_count = len(words)
+                
+                total_tokens = token_count + input_token_count
+                
+                if cerebrium_tokens_per_sec is not None:
+                    tokens_per_second = cerebrium_tokens_per_sec
+                    total_tokens_per_second = round(total_tokens / inference_time, 1) if inference_time > 0 else 0
+                else:
+                    tokens_per_second = round(token_count / inference_time, 1) if inference_time > 0 and token_count > 0 else 0
+                    total_tokens_per_second = round(total_tokens / inference_time, 1) if inference_time > 0 else 0
+                
+                # ENHANCED: Calculate cost with token insights
+                time_based_cost = inference_time * 0.000306  # A10 cost per second
+                cost_per_output_token = time_based_cost / token_count if token_count > 0 else 0
+                cost_per_total_token = time_based_cost / total_tokens if total_tokens > 0 else 0
+                cost = time_based_cost
                 
                 print(f"✅ Complete test successful!")
                 # ENHANCED: Show full response instead of truncated
                 print(f"   📝 Full Response: '{content}'")
-                print(f"   📊 Length: {len(content)} chars, {token_count} tokens")
+                print(f"   📊 Tokens: {input_token_count} input + {token_count} output = {total_tokens} total")
                 print(f"   ⏱️  Time: {inference_time:.2f}s")
-                print(f"   🚀 Speed: {tokens_per_second} tokens/sec")
-                print(f"   💰 Cost: ${cost:.6f}")
+                print(f"   🚀 Speed: {tokens_per_second} output tok/s, {total_tokens_per_second} total tok/s")
+                print(f"   💰 Cost: ${cost:.6f} (${cost_per_output_token:.8f}/output tok, ${cost_per_total_token:.8f}/total tok)")
                 
                 return True
             else:
@@ -460,13 +533,17 @@ class OptimizedPerformanceTester:
         Run comprehensive benchmark with FIXED performance measurement.
         """
         if test_prompts is None:
-            # Optimized test prompts for Mistral-7B
+            # Customer service prompts with rich context, expecting ~60 token responses
             test_prompts = [
-                "Hi",                                           # Ultra-short
-                "What is AI?",                                  # Short question
-                "Explain Python briefly",                      # Medium length
-                "How does machine learning work?",             # Technical question
-                "What are the benefits of cloud computing?",   # Longer prompt
+                "I'm a Premium Plus customer (account #12345) who purchased a wireless bluetooth headset (model BT-7500) from your electronics store last Tuesday for $249.99. The left earbud stopped working yesterday after only 5 days of normal use. I have the receipt and original packaging. I've been a loyal customer for 3 years and have never returned anything before. I'm traveling next week and really need these headphones working. What are my options for getting this resolved quickly?",
+                
+                "Hello, I ordered a birthday cake for my daughter's 8th birthday party this Saturday at 2 PM. Order confirmation #CAKE789 shows chocolate cake with vanilla frosting and 'Happy Birthday Emma' in pink letters. I placed the order 2 weeks ago and paid $85 including delivery to 123 Oak Street. However, I just realized I need to change the pickup time from 12 PM to 10 AM because the party venue became available earlier. Is it possible to modify the pickup time?",
+                
+                "I'm calling about my internet service that has been extremely slow for the past week. I'm on the Fiber Ultra plan paying $79/month and typically get 500 Mbps download speeds. However, speed tests now show only 15-20 Mbps, making it impossible to work from home. I've already tried unplugging the modem for 30 seconds, checked all cable connections, and ran multiple speed tests at different times. My service address is 456 Pine Avenue, account number INT-9876. Can you help troubleshoot this issue?",
+                
+                "I received my credit card statement today and noticed a charge for $127.50 from 'Digital Streaming Services' on January 15th that I don't recognize. I only subscribe to Netflix ($15.99/month) and Spotify ($9.99/month). I haven't signed up for any new streaming services recently. My card number ends in 4832 and this is regarding statement period December 15 - January 14. I'm concerned this might be fraudulent. What steps should I take to dispute this charge?",
+                
+                "I need to return a winter coat I bought online 3 weeks ago (order #WC-2024-455). It's a women's size medium navy wool coat that cost $189.99. When it arrived, the color looked much darker than on the website photos, and the fit is tighter than expected despite ordering my usual size. The coat still has all tags attached and I have the original shipping box. According to your website, I have a 30-day return window. How do I process this return and will I need to pay for return shipping?"
             ]
         
         print(f"🏃 Running optimized benchmark: {len(test_prompts)} prompts × {runs_per_prompt} runs")
@@ -489,15 +566,17 @@ class OptimizedPerformanceTester:
                     prompt_results.append(result)
                     all_results.append(result)
                     
-                    # Quick feedback with FIXED metrics
+                    # Quick feedback with ENHANCED metrics
                     time_taken = result.get("inference_time") or result.get("total_time")
-                    tokens_per_sec = result.get("tokens_per_second", 0)
-                    token_count = result.get("token_count", 0)
+                    output_tokens_per_sec = result.get("tokens_per_second", 0)
+                    total_tokens_per_sec = result.get("total_tokens_per_second", 0)
+                    output_tokens = result.get("token_count", 0)
+                    total_tokens = result.get("total_tokens", 0)
                     
                     if time_taken <= self.performance_targets["max_inference_time"]:
-                        print(f"✅ {time_taken:.2f}s ({token_count} tok, {tokens_per_sec:.1f} tok/s)")
+                        print(f"✅ {time_taken:.2f}s ({output_tokens}→{total_tokens} tok, {output_tokens_per_sec:.1f}→{total_tokens_per_sec:.1f} tok/s)")
                     else:
-                        print(f"⚠️  {time_taken:.2f}s ({token_count} tok, {tokens_per_sec:.1f} tok/s) - SLOW")
+                        print(f"⚠️  {time_taken:.2f}s ({output_tokens}→{total_tokens} tok, {output_tokens_per_sec:.1f}→{total_tokens_per_sec:.1f} tok/s) - SLOW")
                 else:
                     print("❌ Failed")
                 
@@ -507,22 +586,26 @@ class OptimizedPerformanceTester:
             # Summarize this prompt's performance
             if prompt_results:
                 avg_time = statistics.mean([r.get("inference_time") or r.get("total_time") for r in prompt_results])
-                avg_tokens_per_sec = statistics.mean([r.get("tokens_per_second", 0) for r in prompt_results])
+                avg_output_tokens_per_sec = statistics.mean([r.get("tokens_per_second", 0) for r in prompt_results])
+                avg_total_tokens_per_sec = statistics.mean([r.get("total_tokens_per_second", 0) for r in prompt_results])
                 avg_cost = statistics.mean([r.get("cost", 0) for r in prompt_results])
                 avg_score = statistics.mean([r.get("performance_score", {}).get("overall", 0) for r in prompt_results])
-                avg_token_count = statistics.mean([r.get("token_count", 0) for r in prompt_results])
+                avg_output_token_count = statistics.mean([r.get("token_count", 0) for r in prompt_results])
+                avg_total_token_count = statistics.mean([r.get("total_tokens", 0) for r in prompt_results])
                 
                 prompt_summaries.append({
                     "prompt": prompt,
                     "avg_time": avg_time,
-                    "avg_tokens_per_sec": avg_tokens_per_sec,
+                    "avg_tokens_per_sec": avg_output_tokens_per_sec,  # Keep for backward compatibility
+                    "avg_total_tokens_per_sec": avg_total_tokens_per_sec,
                     "avg_cost": avg_cost,
                     "avg_score": avg_score,
-                    "avg_token_count": avg_token_count,
+                    "avg_token_count": avg_output_token_count,  # Keep for backward compatibility
+                    "avg_total_token_count": avg_total_token_count,
                     "runs": len(prompt_results)
                 })
                 
-                print(f"   📊 Average: {avg_time:.2f}s, {avg_token_count:.1f} tok, {avg_tokens_per_sec:.1f} tok/s, ${avg_cost:.6f}, Score: {avg_score:.1f}/100")
+                print(f"   📊 Average: {avg_time:.2f}s, {avg_output_token_count:.1f}→{avg_total_token_count:.1f} tok, {avg_output_tokens_per_sec:.1f}→{avg_total_tokens_per_sec:.1f} tok/s, ${avg_cost:.6f}, Score: {avg_score:.1f}/100")
         
         # Overall benchmark results
         if all_results:
@@ -542,12 +625,17 @@ class OptimizedPerformanceTester:
         print("🎯 OPTIMIZED A10 BENCHMARK SUMMARY (Mistral-7B)")
         print("=" * 70)
         
-        # Overall statistics with FIXED calculations
+        # Overall statistics with ENHANCED token calculations
         times = [r.get("inference_time") or r.get("total_time") for r in successful_results]
-        speeds = [r.get("tokens_per_second", 0) for r in successful_results]
+        output_speeds = [r.get("tokens_per_second", 0) for r in successful_results]
+        total_speeds = [r.get("total_tokens_per_second", 0) for r in successful_results]
         costs = [r.get("cost", 0) for r in successful_results]
         scores = [r.get("performance_score", {}).get("overall", 0) for r in successful_results]
-        token_counts = [r.get("token_count", 0) for r in successful_results]
+        output_token_counts = [r.get("token_count", 0) for r in successful_results]
+        input_token_counts = [r.get("input_token_count", 0) for r in successful_results]
+        total_token_counts = [r.get("total_tokens", 0) for r in successful_results]
+        cost_per_output_tokens = [r.get("cost_per_output_token", 0) for r in successful_results]
+        cost_per_total_tokens = [r.get("cost_per_total_token", 0) for r in successful_results]
         
         print(f"📊 Overall Performance ({len(successful_results)} successful runs):")
         print(f"   ⏱️  Inference Time:")
@@ -557,21 +645,28 @@ class OptimizedPerformanceTester:
         print(f"      Target:  <{self.performance_targets['max_inference_time']}s")
         
         print(f"   🚀 Speed:")
-        print(f"      Average: {statistics.mean(speeds):.1f} tokens/sec")
-        print(f"      Median:  {statistics.median(speeds):.1f} tokens/sec")
-        print(f"      Min/Max: {min(speeds):.1f} / {max(speeds):.1f} tokens/sec")
-        print(f"      Target:  >{self.performance_targets['min_tokens_per_second']} tokens/sec")
+        print(f"      Output tokens/sec:")
+        print(f"         Average: {statistics.mean(output_speeds):.1f} tokens/sec")
+        print(f"         Median:  {statistics.median(output_speeds):.1f} tokens/sec")
+        print(f"         Min/Max: {min(output_speeds):.1f} / {max(output_speeds):.1f} tokens/sec")
+        print(f"         Target:  >{self.performance_targets['min_tokens_per_second']} tokens/sec")
+        print(f"      Total tokens/sec (input+output):")
+        print(f"         Average: {statistics.mean(total_speeds):.1f} tokens/sec")
+        print(f"         Median:  {statistics.median(total_speeds):.1f} tokens/sec")
+        print(f"         Min/Max: {min(total_speeds):.1f} / {max(total_speeds):.1f} tokens/sec")
         
-        print(f"   📝 Token Generation:")
-        print(f"      Average: {statistics.mean(token_counts):.1f} tokens per response")
-        print(f"      Median:  {statistics.median(token_counts):.1f} tokens per response")
-        print(f"      Min/Max: {min(token_counts):.0f} / {max(token_counts):.0f} tokens")
+        print(f"   📝 Token Breakdown:")
+        print(f"      Input tokens (avg): {statistics.mean(input_token_counts):.1f}")
+        print(f"      Output tokens (avg): {statistics.mean(output_token_counts):.1f}")
+        print(f"      Total tokens (avg): {statistics.mean(total_token_counts):.1f}")
+        print(f"      Output range: {min(output_token_counts):.0f} - {max(output_token_counts):.0f} tokens")
         
         print(f"   💰 Cost:")
-        print(f"      Average: ${statistics.mean(costs):.6f} per request")
-        print(f"      Median:  ${statistics.median(costs):.6f} per request")
-        print(f"      Min/Max: ${min(costs):.6f} / ${max(costs):.6f}")
-        print(f"      Target:  <${self.performance_targets['max_cost_per_request']}")
+        print(f"      Per request: ${statistics.mean(costs):.6f} (avg), ${statistics.median(costs):.6f} (median)")
+        print(f"      Per output token: ${statistics.mean(cost_per_output_tokens):.8f} (avg)")
+        print(f"      Per total token: ${statistics.mean(cost_per_total_tokens):.8f} (avg)")
+        print(f"      Request range: ${min(costs):.6f} - ${max(costs):.6f}")
+        print(f"      Target: <${self.performance_targets['max_cost_per_request']} per request")
         
         # Performance against targets
         targets_met = sum(1 for r in successful_results if r.get("performance_score", {}).get("meets_targets", False))
@@ -581,54 +676,62 @@ class OptimizedPerformanceTester:
         print(f"      Average: {statistics.mean(scores):.1f}/100")
         print(f"      Targets met: {targets_met}/{len(successful_results)} ({target_percentage:.1f}%)")
         
-        # Cost comparison with OpenAI - UPDATED: Correct GPT-4o-mini pricing
+        # Cost comparison with OpenAI - ENHANCED with proper token breakdown
         avg_cost = statistics.mean(costs)
-        avg_tokens = statistics.mean(token_counts)
+        avg_input_tokens = statistics.mean(input_token_counts)
+        avg_output_tokens = statistics.mean(output_token_counts)
+        avg_total_tokens = statistics.mean(total_token_counts)
         
         # Calculate cost per token for Cerebrium
-        cerebrium_cost_per_token = avg_cost / avg_tokens if avg_tokens > 0 else 0
+        cerebrium_cost_per_output_token = statistics.mean(cost_per_output_tokens)
+        cerebrium_cost_per_total_token = statistics.mean(cost_per_total_tokens)
         
         # OpenAI GPT-4o-mini pricing (January 2025 - UPDATED)
         # Input: $1.100 per 1M tokens, Output: $4.400 per 1M tokens
         openai_output_cost_per_token = 4.400 / 1_000_000  # $0.0000044 per output token
         openai_input_cost_per_token = 1.100 / 1_000_000   # $0.0000011 per input token
         
-        # For comparison, use output token pricing (since that's what we're measuring)
-        cost_per_token_ratio = cerebrium_cost_per_token / openai_output_cost_per_token if openai_output_cost_per_token > 0 else 0
+        # For comparison, use output token pricing and total token pricing
+        output_cost_ratio = cerebrium_cost_per_output_token / openai_output_cost_per_token if openai_output_cost_per_token > 0 else 0
         
-        # Also calculate total request cost for reference
-        avg_input_tokens = 15  # Rough estimate for test prompts
+        # Calculate total request cost for reference using actual token counts
         openai_input_cost = avg_input_tokens * openai_input_cost_per_token
-        openai_output_cost = avg_tokens * openai_output_cost_per_token
+        openai_output_cost = avg_output_tokens * openai_output_cost_per_token
         openai_total_cost = openai_input_cost + openai_output_cost
         total_cost_ratio = avg_cost / openai_total_cost if openai_total_cost > 0 else 0
         
-        print(f"\n💵 Cost Comparison - Cost Per Token:")
+        print(f"\n💵 Cost Comparison - Enhanced Token Analysis:")
         print(f"   🔸 Cost per output token:")
-        print(f"      Cerebrium (Mistral-7B): ${cerebrium_cost_per_token:.8f}")
+        print(f"      Cerebrium (Mistral-7B): ${cerebrium_cost_per_output_token:.8f}")
         print(f"      OpenAI (gpt-4o-mini):   ${openai_output_cost_per_token:.8f}")
-        print(f"      Ratio: {cost_per_token_ratio:.1f}x")
+        print(f"      Output token ratio: {output_cost_ratio:.1f}x")
+        
+        print(f"   🔸 Cost per total token (input+output):")
+        print(f"      Cerebrium (Mistral-7B): ${cerebrium_cost_per_total_token:.8f}")
+        print(f"      OpenAI equivalent:      ${(openai_input_cost + openai_output_cost) / avg_total_tokens:.8f}")
         
         print(f"\n   📋 Total request cost breakdown:")
-        print(f"      Cerebrium: ${avg_cost:.6f} ({avg_tokens:.0f} tokens)")
+        print(f"      Cerebrium: ${avg_cost:.6f}")
+        print(f"        - {avg_input_tokens:.1f} input + {avg_output_tokens:.1f} output = {avg_total_tokens:.1f} total tokens")
         print(f"      OpenAI: ${openai_total_cost:.6f}")
-        print(f"        - Input (~{avg_input_tokens} tokens): ${openai_input_cost:.6f}")
-        print(f"        - Output (~{avg_tokens:.0f} tokens): ${openai_output_cost:.6f}")
+        print(f"        - Input ({avg_input_tokens:.1f} tokens): ${openai_input_cost:.6f}")
+        print(f"        - Output ({avg_output_tokens:.1f} tokens): ${openai_output_cost:.6f}")
         print(f"      Total cost ratio: {total_cost_ratio:.1f}x")
         
         # Updated competitiveness assessment based on cost per token
-        if cost_per_token_ratio <= 3.0:
-            print("   ✅ COMPETITIVE cost per token!")
-        elif cost_per_token_ratio <= 5.0:
-            print("   ⚠️  Reasonable cost per token")
+        if output_cost_ratio <= 3.0:
+            print("   ✅ COMPETITIVE cost per output token!")
+        elif output_cost_ratio <= 5.0:
+            print("   ⚠️  Reasonable cost per output token")
         else:
-            print("   ❌ Expensive cost per token vs OpenAI")
+            print("   ❌ Expensive cost per output token vs OpenAI")
         
         # Value analysis
         print(f"\n   💡 Value Analysis:")
-        print(f"      Performance: {statistics.mean(speeds):.1f} tokens/sec vs OpenAI's ~20-30 tokens/sec")
-        if statistics.mean(speeds) > 30:
-            print("      ✅ FASTER generation than OpenAI")
+        print(f"      Output speed: {statistics.mean(output_speeds):.1f} tokens/sec vs OpenAI's ~20-30 tokens/sec")
+        print(f"      Total throughput: {statistics.mean(total_speeds):.1f} tokens/sec (input+output)")
+        if statistics.mean(output_speeds) > 30:
+            print("      ✅ FASTER output generation than OpenAI")
         print(f"      Privacy: ✅ Your own dedicated model")
         print(f"      Latency: {statistics.mean(times):.2f}s avg (very good for self-hosted)")
         
@@ -641,7 +744,7 @@ class OptimizedPerformanceTester:
         
         # Success assessment
         avg_time = statistics.mean(times)
-        avg_speed = statistics.mean(speeds)
+        avg_output_speed = statistics.mean(output_speeds)
         
         print(f"\n🏆 Optimization Success Assessment:")
         if avg_time <= self.performance_targets["max_inference_time"]:
@@ -649,15 +752,15 @@ class OptimizedPerformanceTester:
         else:
             print(f"   ❌ Inference time still {avg_time:.2f}s (target: <{self.performance_targets['max_inference_time']}s)")
         
-        if avg_speed >= self.performance_targets["min_tokens_per_second"]:
+        if avg_output_speed >= self.performance_targets["min_tokens_per_second"]:
             print("   ✅ Token generation speed TARGET MET!")
         else:
-            print(f"   ❌ Speed still {avg_speed:.1f} tok/s (target: >{self.performance_targets['min_tokens_per_second']} tok/s)")
+            print(f"   ❌ Speed still {avg_output_speed:.1f} tok/s (target: >{self.performance_targets['min_tokens_per_second']} tok/s)")
         
-        if cost_per_token_ratio <= 3.0:
+        if output_cost_ratio <= 3.0:
             print("   ✅ Cost competitiveness TARGET MET!")
         else:
-            print(f"   ❌ Still {cost_per_token_ratio:.1f}x more expensive than OpenAI")
+            print(f"   ❌ Still {output_cost_ratio:.1f}x more expensive than OpenAI")
 
 
 def main():
